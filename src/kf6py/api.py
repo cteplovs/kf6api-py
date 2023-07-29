@@ -8,6 +8,7 @@ class KF6API:
             'userName': username,
             'password': password
         }
+        print("Hey!")
         self.KF_URL = url.strip('/ ')
         self.token = self._login()
         self.author_id = None
@@ -67,22 +68,28 @@ class KF6API:
 
         self.current_community = community_id
         self.temp_data = responses
-        print("contributions has been saved in the memory")
+
+        print("contributions have been saved in memory")
 
     def _simplify_notes(self, note_obj) -> Dict[str, Any]:
-        processed_text = BeautifulSoup(note_obj['data']['body'], features="html.parser").get_text().strip('\n').replace(u'\xa0', u' ')
+        # BS is expensive -- is there another way of replacing Latin1 NBSP?
+        #processed_text = BeautifulSoup(note_obj['data']['body'], features="html.parser").get_text().strip('\n').replace(u'\xa0', u' ')
+
+        if type(note_obj['data']) is str:
+            note_obj['data'] = {'body': note_obj['data']}
         return {
             "_id": note_obj["_id"],
-            "_type": note_obj["type"],
+            "id": note_obj["_id"],
+            "_type": note_obj.get("type",0),
             "authors": note_obj["authors"],
             "title": note_obj["title"],
             "text4search": note_obj["text4search"],
-            "wordCount": note_obj.get('wordCount', self._get_word_count(processed_text)),
+            "wordCount": note_obj.get('wordCount', 0),#self._get_word_count(processed_text)),
             'status': note_obj['status'],
             'created': note_obj['created'],
-            'data': note_obj['data']['body'],
+            'data': note_obj.get('data',{}).get('body',""),
             'riseabove_view': note_obj['data'].get('riseabove', {}).get('viewId', None),
-            'processed_text': processed_text
+            #'processed_text': processed_text
         }
 
     def get_views(self, community_id: str) -> List[Dict[str, Any]]:
@@ -103,6 +110,7 @@ class KF6API:
         if community_id != self.current_community:
             self.get_contributions(community_id)
 
+
         body = {
             "query": {
                 "type": "contains",
@@ -111,6 +119,7 @@ class KF6API:
                 "_to.status": "active"
             },
         }
+
         res = requests.post(f"{self.KF_URL}/api/links/{community_id}/search", headers= self._craft_header(), json= body)
         if res.json(): 
             print("VIEW TITLE:", res.json()[0]["_from"]["title"])
@@ -118,11 +127,16 @@ class KF6API:
         riseaboves = []
         target_ids = [i['to'] for i in res.json()]
         result = []
+        #print("starting target_ids")
         for i in target_ids:
-            data = self.temp_data.setdefault(i, self._simplify_notes(self.get_single_object(i)))
-            result.append(data)
-
-            riseabove_view = data.get('riseabove_view', None) # this helps for some scheme where this doesn't exist
+            try:
+                tmp1 = self.get_single_object(i)
+                tmp2 = self._simplify_notes(tmp1)
+                data = self.temp_data.setdefault(i, tmp2)
+                result.append(data)
+            except:
+                print("Whoops")
+            riseabove_view = self.temp_data.get('riseabove_view', None) # this helps for some scheme where this doesn't exist
             if riseabove_view:
                 riseaboves.append(riseabove_view)
 
@@ -133,7 +147,12 @@ class KF6API:
         return result
 
     def get_single_object(self, object_id: str):
+        if self.temp_data.get(object_id):
+            return self.temp_data[object_id]
+        print(f"Retrieving {object_id} from KF server")
         response = requests.get(f"{self.KF_URL}/api/objects/{object_id}", headers=self._craft_header() ).json()
+        # insert into cache
+        self.temp_data[object_id] = response
         return response
 
     def get_links(self, community_id: str, type: Optional[str] = None, succinct: bool = True):
